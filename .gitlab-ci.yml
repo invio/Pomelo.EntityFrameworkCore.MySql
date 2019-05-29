@@ -1,0 +1,91 @@
+variables:
+  BUILD_VERSION: $CI_PIPELINE_IID
+  NUGET_PACKAGES: $CI_PROJECT_DIR/packages
+  ARTIFACTS_DIRECTORY: artifacts
+  # Test environment mysql settings
+  MYSQL_ROOT_PASSWORD: $MYSQL_ROOT_PASSWORD
+  MYSQL_DATABASE: "northwind"
+
+stages:
+  - build
+  - test
+  - deploy
+services:
+  - mysql:$MYSQL_VERSION
+
+.dotnet: &dotnet
+  image: microsoft/dotnet:2.2.100-sdk
+  tags:
+    - docker
+  cache:
+    key: "$CI_COMMIT_REF_NAME"
+
+build:
+  <<: *dotnet
+  stage: build
+  script:
+    - dotnet restore --packages packages
+    - 'echo { \"Data\": { \"ConnectionString\": \"server=mysql\;user id=root\;password=$MYSQL_ROOT_PASSWORD\;port=3306\;\", \"ServerVersion\": \"$MYSQL_VERSION-mysql\" } } > test/EFCore.MySql.FunctionalTests/config.json'
+    - 'echo { \"Data\": { \"ConnectionString\": \"server=mysql\;user id=root\;password=$MYSQL_ROOT_PASSWORD\;port=3306\;database=pomelo_test\;\", \"ServerVersion\": \"$MYSQL_VERSION-mysql\" } } > test/EFCore.MySql.IntegrationTests/config.json'
+    - dotnet build --packages packages --no-restore -c Release /p:BuildNumber=$BUILD_VERSION
+    - dotnet pack --no-build -c Release -o ../../$ARTIFACTS_DIRECTORY /p:IsFinalBuild=true
+  cache:
+    policy: push
+  artifacts:
+    untracked: true
+    paths:
+      - packages/
+      - src/
+      - test/
+      - $ARTIFACTS_DIRECTORY
+
+test:
+  <<: *dotnet
+  stage: test
+  script:
+    - dotnet test test/EFCore.MySql.Tests
+        /p:CollectCoverage="true"
+        /p:CoverletOutputFormat="json"
+        /p:CoverletOutput="../../coverage/coverage.json"
+    - dotnet test -c Release test/EFCore.MySql.FunctionalTests --filter "FullyQualifiedName~Pomelo.EntityFrameworkCore.MySql.FunctionalTests.MigrationSqlGeneratorMySqlTest|FullyQualifiedName~Pomelo.EntityFrameworkCore.MySql.FunctionalTests.MigrationSqlGeneratorMySql55Test"
+        /p:CollectCoverage="true"
+        /p:CoverletOutputFormat="json"
+        /p:MergeWith="../../coverage/coverage.json"
+        /p:CoverletOutput="../../coverage/coverage.json"
+    - ./test/EFCore.MySql.IntegrationTests/scripts/rebuild.sh
+    - ./test/EFCore.MySql.IntegrationTests/scripts/scaffold.sh
+    - rm -rf ./test/EFCore.MySql.IntegrationTests/Scaffold
+    - dotnet test -c Release test/EFCore.MySql.IntegrationTests
+        /p:CollectCoverage="true"
+        /p:CoverletOutputFormat="opencover"
+        /p:MergeWith="../../coverage/coverage.json"
+        /p:CoverletOutput="../../coverage/coverage.opencover.xml"
+    - export EF_BATCH_SIZE="10" && ./dotnet-run.sh dotnet test -c Release test/EFCore.MySql.IntegrationTests
+    - export EF_RETRY_ON_FAILURE="3" && ./dotnet-run.sh dotnet test -c Release test/EFCore.MySql.IntegrationTests
+ #     - curl https://codecov.io/bash -o codecov.sh
+ #     - chmod +x ./codecov.sh
+ #     - ./codecov.sh
+ #         -f ./coverage/coverage.opencover.xml
+ #         -t $COVERAGE_REPOSITORY_UPLOAD_TOKEN
+ #         -X gcov
+  dependencies:
+    - build
+  cache:
+    policy: pull
+  artifacts:
+    when: always
+    paths:
+      - coverage/
+
+publish:
+  <<: *dotnet
+  tags:
+    - nuget
+  stage: deploy
+  only:
+    - tags
+  script:
+    - sudo nuget update -self
+    - find $ARTIFACTS_DIRECTORY -name "*.nupkg" | xargs -I{} -n 1 sudo nuget push {} $NUGET_API_KEY -Source $NUGET_FEED_SOURCE
+  dependencies:
+    - build
