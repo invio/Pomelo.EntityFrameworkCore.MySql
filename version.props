@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
     <VersionPrefix>2.2.0</VersionPrefix>
-    <VersionSuffix>invio-1</VersionSuffix>
+    <VersionSuffix>invio-2</VersionSuffix>
     <PackageVersion Condition="'$(IsFinalBuild)' == 'true' AND '$(VersionSuffix)' == 'rtm' ">$(VersionPrefix)</PackageVersion>
     <PackageVersion Condition="'$(IsFinalBuild)' == 'true' AND '$(VersionSuffix)' != 'rtm' ">$(VersionPrefix)-$(VersionSuffix)</PackageVersion>
     <BuildNumber Condition="'$(BuildNumber)' == ''">t000</BuildNumber>
